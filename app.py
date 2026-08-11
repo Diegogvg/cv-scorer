@@ -75,6 +75,11 @@ def puntaje():
         empresa = str(data.get('empresa', '')).strip()[:80]
         descripcion = str(data.get('descripcion', '')).strip()[:1000]
 
+        # LOG para diagnosticar
+        print(f"TITULO: {titulo}")
+        print(f"EMPRESA: {empresa}")
+        print(f"DESCRIPCION ({len(descripcion)} chars): {descripcion[:100]}")
+
         prompt = f"VACANTE: {titulo} en {empresa}\nDESCRIPCION: {descripcion}\nCANDIDATO: {CV}\nPuntaje:"
 
         resultado = llamar_groq(prompt)
