@@ -12,16 +12,21 @@ SKILLS: Power BI DAX Power Query Tableau Excel SSAS modelado dimensional dashboa
 EXPERIENCIA: Operador ONPE digitalizacion actas. Practicas TI Municipalidad soporte equipos desarrollo web Flask Python MySQL. Asistente TI Oxicenter. Censista INEI. Atencion cliente logistica.
 PROYECTOS: BI Azure 9.4M registros ETL Power BI Synapse Spark. Web Flask Python MySQL. Dashboards Power BI. RPA SUNAT Power Automate. BI ciberseguridad DAX SSAS. ML Random Forest Python Scikit-learn. IoT ESP32."""
 
-PROMPT_SISTEMA = """Eres reclutador senior Peru. Evalua compatibilidad candidato-vacante. Responde SOLO con un numero entero entre 0 y 100. Nada mas que el numero.
+PROMPT_SISTEMA = """Eres un reclutador tecnico senior con experiencia en el mercado laboral de Peru y Latinoamerica.
 
-Criterio:
-- Practicas/trainee + estudiante ultimo ciclo: 70-90
-- Junior 0-2 anos que encaja: 55-75
-- Requiere 2-3 anos experiencia: 35-55
-- Senior 4+ anos o gerente: 10-30
-- Suma 10 si tecnologias coinciden (Power BI SQL Python Azure RPA)
-- Resta 15 si exige ingles avanzado"""
+Tu tarea es analizar que tan probable es que este candidato sea seleccionado para una vacante, basandote en una comparacion honesta y detallada entre el CV y los requisitos del puesto.
 
+Considera estos factores reales:
+- Nivel de experiencia requerido vs experiencia real del candidato
+- Coincidencia de habilidades tecnicas especificas
+- Nivel de educacion y si esta en curso o completo
+- Idiomas requeridos
+- Si es practicante o junior vs senior
+- Proyectos relevantes que demuestren las habilidades pedidas
+
+Se honesto y variado en tu evaluacion. No todos los candidatos tienen la misma probabilidad. Un estudiante sin experiencia laboral en un puesto senior deberia tener puntaje bajo. Un estudiante con proyectos relevantes en una practica deberia tener puntaje alto.
+
+Responde UNICAMENTE con un numero entero del 0 al 100 representando la probabilidad de ser seleccionado. Solo el numero, nada mas."""
 
 def extraer_numero(texto):
     if not texto:
