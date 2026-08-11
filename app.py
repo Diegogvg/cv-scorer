@@ -21,10 +21,11 @@ CERTIFICACIONES: SQL Server UNI-OTI, Excel Fundacion Romero, Fundamentos Analisi
 
 @app.route('/puntaje', methods=['POST'])
 def puntaje():
-    data = request.json
-    titulo = data.get('titulo', '')
-    empresa = data.get('empresa', '')
-    descripcion = data.get('descripcion', '')[:800]
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        titulo = str(data.get('titulo', ''))[:200]
+        empresa = str(data.get('empresa', ''))[:100]
+        descripcion = str(data.get('descripcion', ''))[:800]
     
     prompt = f"""Eres reclutador senior en Peru. Analiza que tan compatible es este candidato con la vacante.
 Responde SOLO con un numero entero del 1 al 100. Sin texto adicional, solo el numero.
