@@ -40,10 +40,11 @@ def extraer_numero(texto):
 
 
 def llamar_groq(prompt_usuario, max_reintentos=3):
+    time.sleep(2)  # pausa para evitar rate limit
     for intento in range(max_reintentos):
         try:
             respuesta = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": PROMPT_SISTEMA},
                     {"role": "user", "content": prompt_usuario}
