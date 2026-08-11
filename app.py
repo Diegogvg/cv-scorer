@@ -7,42 +7,34 @@ from groq import Groq
 app = Flask(__name__)
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# CV compacto — solo lo esencial para puntuar (menos tokens = evita rate limit)
-CV = """Estudiante ultimo ciclo (X) Ingenieria de Sistemas, Universidad Nacional de Canete. Perfil orientado a Datos, BI y Automatizacion. Ingles basico.
-SKILLS: Power BI, Power Query, DAX, Tableau, Excel, SSAS Tabular, modelado dimensional, dashboards, KPIs. SQL Server, MySQL, JOIN, CTE, subconsultas. Azure Data Factory, Azure Synapse, Azure Data Lake, arquitectura Medallion, Apache Spark. Power Automate, Power Apps, n8n, RPA. Python (Pandas, NumPy, Scikit-learn, Flask), PHP, JavaScript, HTML, CSS. Git, Docker, Scrum, Agile.
-EXPERIENCIA (practicas y tecnica, ~1 ano): Operador Centro Computo ONPE. Practicas soporte TI Municipalidad (desarrollo sistema web Flask). Asistente TI Oxicenter. Censista INEI. Atencion cliente y logistica.
-PROYECTOS: BI Azure 9.4M registros financieros (ETL, Power BI, Synapse, Spark). Sistema web Flask/Python/MySQL. Dashboards Power BI. RPA SUNAT Power Automate. BI ciberseguridad 100k registros (DAX, SSAS). Machine Learning Random Forest (Python, Scikit-learn). IoT ESP32.
-EDUCACION: Ingenieria Sistemas 2022-2026. Certificaciones SQL Server, Excel, Cisco."""
+CV = """Estudiante ultimo ciclo Ingenieria Sistemas Universidad Nacional Canete. Datos BI Automatizacion. Ingles basico.
+SKILLS: Power BI DAX Power Query Tableau Excel SSAS modelado dimensional dashboards KPIs. SQL Server MySQL JOIN CTE subconsultas. Azure Data Factory Synapse Data Lake Medallion Spark. Power Automate Power Apps n8n RPA. Python Pandas NumPy Scikit-learn Flask. PHP JavaScript HTML CSS. Git Docker Scrum Agile.
+EXPERIENCIA: Operador ONPE digitalizacion actas. Practicas TI Municipalidad soporte equipos desarrollo web Flask Python MySQL. Asistente TI Oxicenter. Censista INEI. Atencion cliente logistica.
+PROYECTOS: BI Azure 9.4M registros ETL Power BI Synapse Spark. Web Flask Python MySQL. Dashboards Power BI. RPA SUNAT Power Automate. BI ciberseguridad DAX SSAS. ML Random Forest Python Scikit-learn. IoT ESP32."""
 
-PROMPT_SISTEMA = """Eres un reclutador tecnico senior en Peru. Evaluas compatibilidad candidato-vacante con un puntaje 0-100.
+PROMPT_SISTEMA = """Eres reclutador senior Peru. Evalua compatibilidad candidato-vacante. Responde SOLO con un numero entero entre 0 y 100. Nada mas que el numero.
 
-Criterio ESTRICTO (no todos merecen 80):
-NIVEL:
-- Practicas/trainee + candidato estudiante ultimo ciclo: 70-95
-- Junior 0-2 anos que encaja: 60-85
-- Pide 2-3 anos: 40-60
-- Pide 4+ anos o senior/gerente: 10-35
-
-TECNICO:
-- Suma si herramientas de la vacante (Power BI, SQL, Python, Azure, RPA) estan en el CV
-- Resta si piden clave que NO tiene (Databricks, PyTorch, TensorFlow, ingles avanzado)
-
-IDIOMA:
-- Exige ingles avanzado y candidato tiene basico: resta 15-25
-
-Responde UNICAMENTE con el numero entero final. Solo el numero."""
+Criterio:
+- Practicas/trainee + estudiante ultimo ciclo: 70-90
+- Junior 0-2 anos que encaja: 55-75
+- Requiere 2-3 anos experiencia: 35-55
+- Senior 4+ anos o gerente: 10-30
+- Suma 10 si tecnologias coinciden (Power BI SQL Python Azure RPA)
+- Resta 15 si exige ingles avanzado"""
 
 
 def extraer_numero(texto):
-    numeros = re.findall(r'\d+', texto)
+    if not texto:
+        return None
+    numeros = re.findall(r'\b(\d{1,3})\b', texto)
     for n in numeros:
         valor = int(n)
         if 0 <= valor <= 100:
             return valor
-    return 50
+    return None
 
 
-def llamar_groq_con_reintentos(prompt_usuario, max_reintentos=4):
+def llamar_groq(prompt_usuario, max_reintentos=3):
     for intento in range(max_reintentos):
         try:
             respuesta = client.chat.completions.create(
@@ -51,17 +43,21 @@ def llamar_groq_con_reintentos(prompt_usuario, max_reintentos=4):
                     {"role": "system", "content": PROMPT_SISTEMA},
                     {"role": "user", "content": prompt_usuario}
                 ],
-                max_tokens=8,
-                temperature=0.3
+                max_tokens=15,
+                temperature=0.1
             )
-            return respuesta.choices[0].message.content.strip()
+            texto = respuesta.choices[0].message.content.strip()
+            numero = extraer_numero(texto)
+            if numero is not None:
+                return numero
+            # Si no extrajo numero, reintenta
+            time.sleep(1)
         except Exception as e:
             error_str = str(e)
             if "rate_limit" in error_str or "429" in error_str:
-                time.sleep(3 * (intento + 1))
-                continue
+                time.sleep(4 * (intento + 1))
             else:
-                raise e
+                return None
     return None
 
 
@@ -69,41 +65,27 @@ def llamar_groq_con_reintentos(prompt_usuario, max_reintentos=4):
 def puntaje():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        titulo = str(data.get('titulo', '')).strip()[:200]
-        empresa = str(data.get('empresa', '')).strip()[:100]
-        descripcion = str(data.get('descripcion', '')).strip()[:1200]
+        titulo = str(data.get('titulo', '')).strip()[:150]
+        empresa = str(data.get('empresa', '')).strip()[:80]
+        descripcion = str(data.get('descripcion', '')).strip()[:1000]
 
-        if not titulo and not descripcion:
-            return jsonify({"puntaje": "0", "motivo": "sin datos"}), 200
+        prompt = f"VACANTE: {titulo} en {empresa}\nDESCRIPCION: {descripcion}\nCANDIDATO: {CV}\nPuntaje:"
 
-        prompt_usuario = f"""VACANTE: {titulo}
-EMPRESA: {empresa}
-DESCRIPCION: {descripcion}
-
-CANDIDATO: {CV}
-
-Puntaje de compatibilidad (0-100):"""
-
-        resultado = llamar_groq_con_reintentos(prompt_usuario)
+        resultado = llamar_groq(prompt)
 
         if resultado is None:
-            return jsonify({"puntaje": "", "motivo": "rate_limit"}), 200
+            return jsonify({"puntaje": ""}), 200
 
-        puntaje_num = extraer_numero(resultado)
-        return jsonify({"puntaje": str(puntaje_num)}), 200
+        return jsonify({"puntaje": str(resultado)}), 200
 
     except Exception as e:
-        return jsonify({"puntaje": "", "error": str(e)[:200]}), 200
+        return jsonify({"puntaje": "", "error": str(e)[:100]}), 200
 
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"})
 
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
