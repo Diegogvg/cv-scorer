@@ -50,7 +50,7 @@ def llamar_groq(prompt_usuario, max_reintentos=3):
                     {"role": "user", "content": prompt_usuario}
                 ],
                 max_tokens=15,
-                temperature=0.1
+                temperature=0.7
             )
             texto = respuesta.choices[0].message.content.strip()
             numero = extraer_numero(texto)
