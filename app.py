@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import json
 from flask import Flask, request, jsonify
 from groq import Groq
 
@@ -37,63 +38,25 @@ PROYECTOS ACADEMICOS DESTACADOS:
 - Sistema IoT riego: ESP32, Arduino, sensores, aplicacion web
 """
 
-PROMPT_SISTEMA = """Eres un reclutador tecnico senior con amplia experiencia en el mercado laboral peruano y latinoamericano.
+PROMPT_SISTEMA = f"""Eres un reclutador tecnico senior en el mercado laboral peruano.
 
-Tu tarea es evaluar que tan probable es que este candidato sea SELECCIONADO en un proceso de seleccion real para la vacante dada.
+Tu tarea es evaluar la probabilidad (0 a 100) de que este candidato sea seleccionado para la vacante dada.
 
-PROCESO DE EVALUACION (razona internamente estos puntos):
-
-1. NIVEL DEL PUESTO vs PERFIL DEL CANDIDATO:
-   - El candidato es estudiante universitario en su ultimo ciclo con practicas y proyectos academicos
-   - Si la vacante pide practicante/trainee/intern: alta compatibilidad base
-   - Si pide junior (0-2 anos): compatibilidad media-alta si las skills encajan
-   - Si pide 2-4 anos de experiencia profesional: compatibilidad baja-media
-   - Si pide 4+ anos, senior, lead, o gerente: compatibilidad muy baja
-
-2. COINCIDENCIA TECNICA:
-   - Identifica las tecnologias y herramientas que PIDE la vacante
-   - Compara con las que TIENE el candidato
-   - Una alta coincidencia sube el puntaje, baja coincidencia lo baja
-
-3. IDIOMAS:
-   - Si la vacante exige ingles intermedio-avanzado: resta puntos significativos (el candidato tiene ingles basico)
-   - Si no menciona ingles o es opcional: no penalizar
-
-4. PROYECTOS RELEVANTES:
-   - Si el candidato tiene proyectos academicos que demuestran las skills pedidas: suma puntos
-   - Los proyectos con datos reales (9.4M registros, 100k registros) son un diferenciador importante
-
-5. SECTOR/INDUSTRIA:
-   - El candidato no tiene experiencia en sectores especificos (banca, retail, consumo masivo)
-   - Si la vacante exige experiencia en sector especifico: resta puntos
+CURRICULUM VITAE DEL CANDIDATO:
+{CV}
 
 ESCALA DE PUNTAJE:
-- 85-100: Candidato muy competitivo, cumple casi todos los requisitos, alta probabilidad de pasar a entrevista
-- 70-84: Buen candidato, cumple los requisitos principales, probabilidad media-alta
-- 55-69: Candidato parcialmente apto, cumple algunos requisitos pero faltan cosas importantes
-- 35-54: Candidato debil para esta vacante, faltan requisitos clave
-- 0-34: Candidato no apto, hay una brecha significativa con los requisitos
+- 85-100: Practicante / Trainee o rol perfectamente alineado.
+- 70-84: Junior (0-2 años) con buena coincidencia técnica.
+- 55-69: Falta alguna tecnología o pide más experiencia.
+- 0-54: Puesto Senior / Lead o exige Inglés Avanzado.
 
-IMPORTANTE: Se honesto y diferenciador. No todos los candidatos merecen 75-80. Un practicante en puesto de practicante puede ser 90. Un estudiante en puesto senior debe ser 20-30. Usa todo el rango del 0 al 100.
-
-Responde UNICAMENTE con el numero entero final. Solo el numero, sin explicaciones."""
+Responde UNICAMENTE con un JSON valido con este formato exacto:
+{{"puntaje": numero_entero_0_a_100}}"""
 
 
-def extraer_numero(texto):
-    """Extrae el primer numero valido entre 0 y 100."""
-    if not texto:
-        return None
-    # Busca numeros de 1-3 digitos
-    numeros = re.findall(r'\b(\d{1,3})\b', texto.strip())
-    for n in numeros:
-        valor = int(n)
-        if 0 <= valor <= 100:
-            return valor
-    return None
-
-
-def llamar_groq(prompt_usuario, max_reintentos=4):
-    """Llama a Groq con reintentos ante rate limit."""
+def llamar_groq(prompt_usuario, max_reintentos=3):
+    """Llama a Groq solicitando formato JSON explícito."""
     for intento in range(max_reintentos):
         try:
             respuesta = client.chat.completions.create(
@@ -102,24 +65,24 @@ def llamar_groq(prompt_usuario, max_reintentos=4):
                     {"role": "system", "content": PROMPT_SISTEMA},
                     {"role": "user", "content": prompt_usuario}
                 ],
-                max_tokens=20,
-                temperature=0.4
+                max_tokens=30,
+                temperature=0.1,
+                response_format={"type": "json_object"}
             )
+            
             texto = respuesta.choices[0].message.content.strip()
-            print(f"Groq respondio: '{texto}'")
-            numero = extraer_numero(texto)
-            if numero is not None:
-                return numero
-            # Si no extrajo numero, reintenta
-            print(f"No se pudo extraer numero de: '{texto}', reintentando...")
-            time.sleep(2)
+            print(f"📥 Respuesta Groq: '{texto}'")
+            
+            # Intentar parsear JSON
+            data = json.loads(texto)
+            puntaje_num = int(data.get("puntaje", 0))
+            return max(0, min(100, puntaje_num))
+
         except Exception as e:
             error_str = str(e)
-            print(f"Error en intento {intento + 1}: {error_str[:100]}")
+            print(f"⚠️ Error intento {intento + 1}: {error_str[:120]}")
             if "rate_limit" in error_str or "429" in error_str:
-                espera = 5 * (intento + 1)
-                print(f"Rate limit, esperando {espera}s...")
-                time.sleep(espera)
+                time.sleep(3 * (intento + 1))
             else:
                 return None
     return None
@@ -129,51 +92,50 @@ def llamar_groq(prompt_usuario, max_reintentos=4):
 def puntaje():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        titulo = str(data.get('titulo', '')).strip()[:200]
+        titulo = str(data.get('titulo', '')).strip()[:150]
         empresa = str(data.get('empresa', '')).strip()[:100]
         descripcion = str(data.get('descripcion', '')).strip()
 
-        # Tomar hasta 1500 chars de la descripcion
-        descripcion = descripcion[:1500]
+        # Recorte de prueba para consumo mínimo
+        descripcion = descripcion[:1000]
 
-        print(f"TITULO: {titulo}")
+        print(f"\n==================== PRUEBA EN GROQ ====================")
+        print(f"PUESTO: {titulo}")
         print(f"EMPRESA: {empresa}")
-        print(f"DESCRIPCION ({len(descripcion)} chars): {descripcion[:80]}")
+        print(f"DESCRIPCION CARACTERES: {len(descripcion)}")
 
         if not titulo and not descripcion:
             return jsonify({"puntaje": ""}), 200
 
-        prompt_usuario = f"""Evalua esta vacante para el candidato descrito en el sistema.
-
-VACANTE: {titulo}
-EMPRESA: {empresa}
-
-DESCRIPCION COMPLETA:
-{descripcion}
-
-Basandote en el CV del candidato y los requisitos de esta vacante, indica la probabilidad de ser seleccionado (0-100):"""
-
-        # Pausa entre llamadas para evitar rate limit
-        time.sleep(3)
+        prompt_usuario = f"""
+EVALUA ESTA VACANTE:
+Puesto: {titulo}
+Empresa: {empresa}
+Descripción: {descripcion}
+"""
 
         resultado = llamar_groq(prompt_usuario)
 
         if resultado is None:
-            print("No se pudo obtener puntaje, devolviendo vacio")
+            print("❌ No se obtuvo puntaje")
             return jsonify({"puntaje": ""}), 200
 
-        print(f"Puntaje final: {resultado}")
+        print(f"✅ Puntaje procesado: {resultado}")
         return jsonify({"puntaje": str(resultado)}), 200
 
     except Exception as e:
-        print(f"Error general: {str(e)[:200]}")
+        print(f"❌ Error general: {str(e)[:200]}")
         return jsonify({"puntaje": "", "error": str(e)[:100]}), 200
 
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "ok", "modelo": "llama-3.3-70b-versatile"})
+    return jsonify({"status": "ok", "provider": "groq", "modelo": "llama-3.3-70b-versatile"})
 
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
