@@ -7,6 +7,8 @@ import anthropic
 
 app = Flask(__name__)
 
+key = os.environ.get("ANTHROPIC_API_KEY", "")
+print(f"🔍 KEY EN RAILWAY: '{key[:7]}' | LARGO: {len(key)}")
 # Inicialización del cliente oficial de Anthropic
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
