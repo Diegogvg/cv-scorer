@@ -7,7 +7,6 @@ import anthropic
 
 app = Flask(__name__)
 
-
 # Inicialización del cliente oficial de Anthropic
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
@@ -44,10 +43,8 @@ PROYECTOS ACADEMICOS DESTACADOS:
 - Sistema IoT riego: ESP32, Arduino, sensores, aplicacion web
 """
 
-# Prompt de sistema (instrucciones fijas del reclutador)
-PROMPT_SISTEMA_BASE = """Eres un reclutador tecnico senior en el mercado laboral peruano.
-
-Tu tarea es evaluar la probabilidad (0 a 100) de que el candidato sea seleccionado para la vacante.
+PROMPT_SISTEMA_BASE = """Eres un reclutador técnico senior en el mercado laboral peruano.
+Evalúa la probabilidad (0 a 100) de que el candidato sea seleccionado para la vacante.
 
 ESCALA DE PUNTAJE:
 - 85-100: Practicante / Trainee o rol perfectamente alineado con sus tecnologías.
@@ -56,11 +53,11 @@ ESCALA DE PUNTAJE:
 - 0-54: Puesto Senior / Lead o requiere Inglés Avanzado obligatorio.
 
 INSTRUCCIÓN DE SALIDA:
-Responde UNICAMENTE con un objeto JSON valido con esta estructura exacta:
-{
-  "puntaje": numero_entero_0_a_100,
-  "razon": "Explicacion breve de 1 sola frase con el motivo del puntaje"
-}"""
+Responde ÚNICAMENTE con un JSON válido sin markdown ni formato extra.
+Ejemplo exacto de salida esperada:
+{"puntaje": 85, "razon": "Estudiante de último ciclo alineado al rol pero falta inglés."}
+
+REGLA DE BREVEDAD: La 'razon' NO debe tener más de 12 palabras."""
 
 # ==============================================================================
 # 2. FUNCIÓN DE LIMPIEZA INTELIGENTE DE TEXTO
@@ -91,18 +88,13 @@ def limpiar_descripcion(texto_raw):
 # 3. LLAMADA A LA API DE CLAUDE CON PROMPT CACHING
 # ==============================================================================
 def llamar_claude(prompt_usuario, max_reintentos=3):
-    """Llama a Claude 3.5 Haiku marcando el CV con caché efímera."""
+    """Llama al modelo con caché efímera guardando Instrucciones + CV."""
     
-    # Estructura del System Prompt dividida para aplicar Prompt Caching únicamente al CV
     system_blocks = [
         {
             "type": "text",
-            "text": PROMPT_SISTEMA_BASE
-        },
-        {
-            "type": "text",
-            "text": f"\nCURRICULUM VITAE DEL CANDIDATO:\n{CV_TEXTO}",
-            "cache_control": {"type": "ephemeral"}  # <--- AQUÍ SE ACTIVA EL 90% DE DESCUENTO
+            "text": f"{PROMPT_SISTEMA_BASE}\n\nCURRICULUM VITAE DEL CANDIDATO:\n{CV_TEXTO}",
+            "cache_control": {"type": "ephemeral"}  # <--- Activa la caché para todo el bloque estático
         }
     ]
 
@@ -110,7 +102,7 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
         try:
             respuesta = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=100,
+                max_tokens=300,  # Token suficiente para que no se corte el JSON
                 temperature=0.1,
                 system=system_blocks,
                 messages=[
@@ -118,26 +110,31 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
                 ]
             )
             
-            # Auditoría detallada de Tokens y Caché de Anthropic
+            # Auditoría de Tokens
             usage = respuesta.usage
             input_tokens = usage.input_tokens
             cache_creation = getattr(usage, 'cache_creation_input_tokens', 0)
             cache_read = getattr(usage, 'cache_read_input_tokens', 0)
             
-            print(f"📊 CONSUMO DE TOKENS (Claude 3.5 Haiku):")
-            print(f"   • Tokens de Entrada Nuevos: {input_tokens}")
-            print(f"   • Tokens Escritos en Caché (1ª vez): {cache_creation}")
-            print(f"   • Tokens Leídos de Caché (90% Descuento): {cache_read}")
-            print(f"   • Tokens de Salida: {usage.output_tokens}")
+            print(f"📊 CONSUMO DE TOKENS:")
+            print(f"   • Entrada Nuevos: {input_tokens}")
+            print(f"   • Escritos en Caché: {cache_creation}")
+            print(f"   • Leídos de Caché (90% Descuento): {cache_read}")
+            print(f"   • Salida: {usage.output_tokens}")
 
             texto_respuesta = respuesta.content[0].text.strip()
-            print(f"📥 Respuesta JSON cruda: {texto_respuesta}")
+            print(f"📥 Respuesta cruda: {texto_respuesta}")
             
+            # Limpieza de markdown si el modelo responde con ```json ... ```
+            if texto_respuesta.startswith("```"):
+                texto_respuesta = re.sub(r"^```[a-zA-Z]*\n?", "", texto_respuesta)
+                texto_respuesta = re.sub(r"\n?```$", "", texto_respuesta).strip()
+
             data = json.loads(texto_respuesta)
             puntaje_val = int(data.get("puntaje", 0))
             razon_val = data.get("razon", "Sin razón especificada")
             
-            print(f"💡 Razón del Reclutador IA: '{razon_val}'")
+            print(f"💡 Razón ({len(razon_val.split())} palabras): '{razon_val}'")
             return max(0, min(100, puntaje_val))
 
         except Exception as e:
@@ -150,7 +147,7 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
     return None
 
 # ==============================================================================
-# 4. ENDPOINT PRINCIPAL (/puntaje)
+# 4. ENDPOINTS
 # ==============================================================================
 @app.route('/puntaje', methods=['POST'])
 def puntaje():
@@ -162,9 +159,9 @@ def puntaje():
 
         descripcion_limpia = limpiar_descripcion(descripcion_raw)
 
-        print(f"\n==================== PRUEBA EN CLAUDE CON CACHÉ ====================")
+        print(f"\n==================== EVALUANDO VACANTE ====================")
         print(f"PUESTO: {titulo} | EMPRESA: {empresa}")
-        print(f"📏 Caracteres Originales: {len(descripcion_raw)}  ──>  Limpios: {len(descripcion_limpia)}")
+        print(f"📏 Caracteres: {len(descripcion_raw)} ──> Limpios: {len(descripcion_limpia)}")
 
         if not titulo and not descripcion_limpia:
             return jsonify({"puntaje": ""}), 200
@@ -172,8 +169,7 @@ def puntaje():
         prompt_usuario = f"""EVALUA ESTA VACANTE:
 Puesto: {titulo}
 Empresa: {empresa}
-Descripción Filtrada:
-{descripcion_limpia}"""
+Descripción: {descripcion_limpia}"""
 
         resultado = llamar_claude(prompt_usuario)
 
@@ -190,8 +186,4 @@ Descripción Filtrada:
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "ok", "provider": "anthropic", "modelo": "claude-3-5-haiku-20241022"})
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    return jsonify({"status": "ok", "provider": "anthropic", "modelo": "claude-sonnet-4-6"})
