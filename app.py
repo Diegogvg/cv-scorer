@@ -85,13 +85,16 @@ def limpiar_descripcion(texto_raw):
     return texto[:2200]
 
 # ==============================================================================
-# 3. LLAMADA A LA API DE CLAUDE
+# 3. LLAMADA A LA API DE CLAUDE (CON LATENCIA Y TOKENS)
 # ==============================================================================
 def llamar_claude(prompt_usuario, max_reintentos=3):
     system_prompt = f"{PROMPT_SISTEMA_BASE}\n\nCURRICULUM VITAE DEL CANDIDATO:\n{CV_TEXTO}"
 
     for intento in range(max_reintentos):
         try:
+            # ⏱️ Inicio del cronómetro
+            inicio = time.time()
+
             respuesta = client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=300,
@@ -101,6 +104,15 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
                     {"role": "user", "content": prompt_usuario}
                 ]
             )
+
+            # ⏱️ Fin del cronómetro y cálculo de latencia
+            fin = time.time()
+            latencia_seg = round(fin - inicio, 2)
+
+            # Extraer tokens del objeto usage
+            input_tokens = respuesta.usage.input_tokens
+            output_tokens = respuesta.usage.output_tokens
+            total_tokens = input_tokens + output_tokens
 
             texto_respuesta = respuesta.content[0].text.strip()
             
@@ -113,8 +125,10 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
             puntaje_val = max(0, min(100, int(data.get("puntaje", 0))))
             razon_val = data.get("razon", "Sin razón especificada").strip()
             
-            print(f"💡 Resultado: Puntaje={puntaje_val} | Razón='{razon_val}'")
-            return puntaje_val, razon_val
+            # IMPRESIÓN COMPLETA EN LOGS DE RAILWAY
+            print(f"💡 Resultado: Puntaje={puntaje_val} | Razón='{razon_val}' | Latencia: {latencia_seg}s | Tokens: [In: {input_tokens} | Out: {output_tokens} | Total: {total_tokens}]")
+            
+            return puntaje_val, razon_val, latencia_seg, input_tokens, output_tokens
 
         except Exception as e:
             error_str = str(e)
@@ -122,8 +136,8 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
             if "rate_limit" in error_str or "429" in error_str:
                 time.sleep(3 * (intento + 1))
             else:
-                return None, None
-    return None, None
+                return None, None, 0, 0, 0
+    return None, None, 0, 0, 0
 
 # ==============================================================================
 # 4. ENDPOINT PRINCIPAL (/puntaje)
@@ -139,23 +153,47 @@ def puntaje():
         descripcion_limpia = limpiar_descripcion(descripcion_raw)
 
         if not titulo and not descripcion_limpia:
-            return jsonify({"puntaje": "", "razon": ""}), 200
+            return jsonify({
+                "puntaje": "",
+                "razon": "",
+                "latencia_seg": 0,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "tokens_total": 0
+            }), 200
 
         prompt_usuario = f"""EVALUA ESTA VACANTE:
 Puesto: {titulo}
 Empresa: {empresa}
 Descripción: {descripcion_limpia}"""
 
-        puntaje_res, razon_res = llamar_claude(prompt_usuario)
+        puntaje_res, razon_res, latencia, tokens_in, tokens_out = llamar_claude(prompt_usuario)
 
         if puntaje_res is None:
-            return jsonify({"puntaje": "", "razon": "Error al procesar"}), 200
+            return jsonify({
+                "puntaje": "",
+                "razon": "Error al procesar",
+                "latencia_seg": 0,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "tokens_total": 0
+            }), 200
 
-        # Devuelve ambos datos al cliente (Make / Postman)
+        # Respuesta JSON con todos los datos clave de telemetría
         return jsonify({
             "puntaje": str(puntaje_res),
-            "razon": razon_res
+            "razon": razon_res,
+            "latencia_seg": latencia,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "tokens_total": tokens_in + tokens_out,
+            "modelo": "claude-haiku-4-5-20251001"
         }), 200
 
     except Exception as e:
         return jsonify({"puntaje": "", "razon": "", "error": str(e)[:100]}), 200
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
