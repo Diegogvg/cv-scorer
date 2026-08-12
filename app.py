@@ -108,7 +108,7 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
     for intento in range(max_reintentos):
         try:
             respuesta = client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-3-5-haiku-latest",
                 max_tokens=100,
                 temperature=0.1,
                 system=system_blocks,
