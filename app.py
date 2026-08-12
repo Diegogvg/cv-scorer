@@ -7,8 +7,7 @@ import anthropic
 
 app = Flask(__name__)
 
-key = os.environ.get("ANTHROPIC_API_KEY", "")
-print(f"🔍 KEY EN RAILWAY: '{key[:7]}' | LARGO: {len(key)}")
+
 # Inicialización del cliente oficial de Anthropic
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
@@ -110,7 +109,7 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
     for intento in range(max_reintentos):
         try:
             respuesta = client.messages.create(
-                model="claude-3-5-haiku-latest",
+                model="claude-sonnet-4-6",
                 max_tokens=100,
                 temperature=0.1,
                 system=system_blocks,
