@@ -159,7 +159,3 @@ Descripción: {descripcion_limpia}"""
 
     except Exception as e:
         return jsonify({"puntaje": "", "razon": "", "error": str(e)[:100]}), 200
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({"status": "ok", "provider": "anthropic", "modelo": "claude-sonnet-4-6"})
