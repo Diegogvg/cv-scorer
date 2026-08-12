@@ -101,7 +101,7 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
     for intento in range(max_reintentos):
         try:
             respuesta = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=300,  # Token suficiente para que no se corte el JSON
                 temperature=0.1,
                 system=system_blocks,
