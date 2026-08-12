@@ -3,15 +3,15 @@ import re
 import json
 import time
 from flask import Flask, request, jsonify
-from groq import Groq
+import anthropic
 
 app = Flask(__name__)
 
-# Inicialización del cliente de Groq utilizando la variable de entorno
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# Inicialización del cliente oficial de Anthropic
+client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 # ==============================================================================
-# 1. PERFIL DEL CANDIDATO (CONTEXTO BASE)
+# 1. PERFIL DEL CANDIDATO (CONTEXTO BASE CON MARCA DE CACHÉ)
 # ==============================================================================
 CV_TEXTO = """
 CANDIDATO: Diego Gianfranco Vicente Guerra
@@ -43,15 +43,10 @@ PROYECTOS ACADEMICOS DESTACADOS:
 - Sistema IoT riego: ESP32, Arduino, sensores, aplicacion web
 """
 
-# ==============================================================================
-# 2. PROMPT DE SISTEMA CON REGLAS Y EVALUACIÓN
-# ==============================================================================
-PROMPT_SISTEMA = f"""Eres un reclutador tecnico senior en el mercado laboral peruano.
+# Prompt de sistema (instrucciones fijas del reclutador)
+PROMPT_SISTEMA_BASE = """Eres un reclutador tecnico senior en el mercado laboral peruano.
 
 Tu tarea es evaluar la probabilidad (0 a 100) de que el candidato sea seleccionado para la vacante.
-
-CURRICULUM VITAE DEL CANDIDATO:
-{CV_TEXTO}
 
 ESCALA DE PUNTAJE:
 - 85-100: Practicante / Trainee o rol perfectamente alineado con sus tecnologías.
@@ -61,29 +56,22 @@ ESCALA DE PUNTAJE:
 
 INSTRUCCIÓN DE SALIDA:
 Responde UNICAMENTE con un objeto JSON valido con esta estructura exacta:
-{{
+{
   "puntaje": numero_entero_0_a_100,
   "razon": "Explicacion breve de 1 sola frase con el motivo del puntaje"
-}}
-"""
+}"""
 
 # ==============================================================================
-# 3. FUNCIÓN DE LIMPIEZA INTELIGENTE DE TEXTO (REDUCCIÓN DE TOKENS)
+# 2. FUNCIÓN DE LIMPIEZA INTELIGENTE DE TEXTO
 # ==============================================================================
 def limpiar_descripcion(texto_raw):
-    """
-    Filtra y elimina el 'texto basura' de la vacante (legales, beneficios genéricos, URLs)
-    para comprimir el tamaño del prompt y maximizar el ahorro de tokens.
-    """
+    """Filtra y elimina el 'texto basura' de la vacante para minimizar consumo de tokens."""
     if not texto_raw:
         return ""
     
     texto = texto_raw
-    
-    # 1. Eliminar enlaces y URLs
     texto = re.sub(r'http\S+|www\S+', '', texto)
     
-    # 2. Eliminar secciones legales y de relleno comunes en LinkedIn
     patrones_relleno = [
         r'Estamos comprometidos con la igualdad.*',
         r'Maersk is committed to a diverse.*',
@@ -95,41 +83,55 @@ def limpiar_descripcion(texto_raw):
     for patron in patrones_relleno:
         texto = re.sub(patron, '', texto, flags=re.IGNORECASE | re.DOTALL)
         
-    # 3. Normalizar espacios en blanco y saltos de línea repetidos
     texto = re.sub(r'\s+', ' ', texto).strip()
-    
-    # 4. Limitar a 2,200 caracteres (Suficiente para cubrir Requisitos y Funciones clave)
     return texto[:2200]
 
 # ==============================================================================
-# 4. LLAMADA A LA API DE GROQ Y EXTRACCIÓN DE METADATA
+# 3. LLAMADA A LA API DE CLAUDE CON PROMPT CACHING
 # ==============================================================================
-def llamar_groq(prompt_usuario, max_reintentos=3):
-    """Ejecuta la llamada a Groq solicitando JSON estricto y muestra métricas de consumo."""
+def llamar_claude(prompt_usuario, max_reintentos=3):
+    """Llama a Claude 3.5 Haiku marcando el CV con caché efímera."""
+    
+    # Estructura del System Prompt dividida para aplicar Prompt Caching únicamente al CV
+    system_blocks = [
+        {
+            "type": "text",
+            "text": PROMPT_SISTEMA_BASE
+        },
+        {
+            "type": "text",
+            "text": f"\nCURRICULUM VITAE DEL CANDIDATO:\n{CV_TEXTO}",
+            "cache_control": {"type": "ephemeral"}  # <--- AQUÍ SE ACTIVA EL 90% DE DESCUENTO
+        }
+    ]
+
     for intento in range(max_reintentos):
         try:
-            respuesta = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": PROMPT_SISTEMA},
-                    {"role": "user", "content": prompt_usuario}
-                ],
-                max_tokens=80,
+            respuesta = client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=100,
                 temperature=0.1,
-                response_format={"type": "json_object"}  # Garantiza respuesta en formato JSON
+                system=system_blocks,
+                messages=[
+                    {"role": "user", "content": prompt_usuario}
+                ]
             )
             
-            # Captura de métricas de uso de tokens
+            # Auditoría detallada de Tokens y Caché de Anthropic
             usage = respuesta.usage
-            print(f"📊 CONSUMO DE TOKENS (Groq):")
-            print(f"   • Tokens de Entrada (Prompt): {usage.prompt_tokens}")
-            print(f"   • Tokens de Salida (Respuesta): {usage.completion_tokens}")
-            print(f"   • Total Tokens: {usage.total_tokens}")
+            input_tokens = usage.input_tokens
+            cache_creation = getattr(usage, 'cache_creation_input_tokens', 0)
+            cache_read = getattr(usage, 'cache_read_input_tokens', 0)
+            
+            print(f"📊 CONSUMO DE TOKENS (Claude 3.5 Haiku):")
+            print(f"   • Tokens de Entrada Nuevos: {input_tokens}")
+            print(f"   • Tokens Escritos en Caché (1ª vez): {cache_creation}")
+            print(f"   • Tokens Leídos de Caché (90% Descuento): {cache_read}")
+            print(f"   • Tokens de Salida: {usage.output_tokens}")
 
-            texto_respuesta = respuesta.choices[0].message.content.strip()
+            texto_respuesta = respuesta.content[0].text.strip()
             print(f"📥 Respuesta JSON cruda: {texto_respuesta}")
             
-            # Parsear el objeto JSON de la respuesta
             data = json.loads(texto_respuesta)
             puntaje_val = int(data.get("puntaje", 0))
             razon_val = data.get("razon", "Sin razón especificada")
@@ -147,7 +149,7 @@ def llamar_groq(prompt_usuario, max_reintentos=3):
     return None
 
 # ==============================================================================
-# 5. ENDPOINT PRINCIPAL (/puntaje)
+# 4. ENDPOINT PRINCIPAL (/puntaje)
 # ==============================================================================
 @app.route('/puntaje', methods=['POST'])
 def puntaje():
@@ -157,28 +159,22 @@ def puntaje():
         empresa = str(data.get('empresa', '')).strip()[:100]
         descripcion_raw = str(data.get('descripcion', ''))
 
-        # Aplicar la estrategia de limpieza inteligente
         descripcion_limpia = limpiar_descripcion(descripcion_raw)
 
-        print(f"\n==================== PRUEBA EN GROQ CON LIMPIEZA ====================")
+        print(f"\n==================== PRUEBA EN CLAUDE CON CACHÉ ====================")
         print(f"PUESTO: {titulo} | EMPRESA: {empresa}")
         print(f"📏 Caracteres Originales: {len(descripcion_raw)}  ──>  Limpios: {len(descripcion_limpia)}")
 
         if not titulo and not descripcion_limpia:
             return jsonify({"puntaje": ""}), 200
 
-        prompt_usuario = f"""
-EVALUA ESTA VACANTE:
+        prompt_usuario = f"""EVALUA ESTA VACANTE:
 Puesto: {titulo}
 Empresa: {empresa}
 Descripción Filtrada:
-{descripcion_limpia}
-"""
+{descripcion_limpia}"""
 
-        # Pausa preventiva anti-rate limit
-        time.sleep(2)
-
-        resultado = llamar_groq(prompt_usuario)
+        resultado = llamar_claude(prompt_usuario)
 
         if resultado is None:
             print("❌ No se pudo procesar el puntaje")
@@ -193,7 +189,7 @@ Descripción Filtrada:
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "ok", "provider": "groq", "modelo": "llama-3.3-70b-versatile"})
+    return jsonify({"status": "ok", "provider": "anthropic", "modelo": "claude-3-5-haiku-20241022"})
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
