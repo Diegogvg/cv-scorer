@@ -85,57 +85,36 @@ def limpiar_descripcion(texto_raw):
     return texto[:2200]
 
 # ==============================================================================
-# 3. LLAMADA A LA API DE CLAUDE CON PROMPT CACHING
+# 3. LLAMADA A LA API DE CLAUDE
 # ==============================================================================
 def llamar_claude(prompt_usuario, max_reintentos=3):
-    """Llama al modelo con caché efímera guardando Instrucciones + CV."""
-    
-    system_blocks = [
-        {
-            "type": "text",
-            "text": f"{PROMPT_SISTEMA_BASE}\n\nCURRICULUM VITAE DEL CANDIDATO:\n{CV_TEXTO}",
-            "cache_control": {"type": "ephemeral"}  # <--- Activa la caché para todo el bloque estático
-        }
-    ]
+    system_prompt = f"{PROMPT_SISTEMA_BASE}\n\nCURRICULUM VITAE DEL CANDIDATO:\n{CV_TEXTO}"
 
     for intento in range(max_reintentos):
         try:
             respuesta = client.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=300,  # Token suficiente para que no se corte el JSON
+                max_tokens=300,
                 temperature=0.1,
-                system=system_blocks,
+                system=system_prompt,
                 messages=[
                     {"role": "user", "content": prompt_usuario}
                 ]
             )
-            
-            # Auditoría de Tokens
-            usage = respuesta.usage
-            input_tokens = usage.input_tokens
-            cache_creation = getattr(usage, 'cache_creation_input_tokens', 0)
-            cache_read = getattr(usage, 'cache_read_input_tokens', 0)
-            
-            print(f"📊 CONSUMO DE TOKENS:")
-            print(f"   • Entrada Nuevos: {input_tokens}")
-            print(f"   • Escritos en Caché: {cache_creation}")
-            print(f"   • Leídos de Caché (90% Descuento): {cache_read}")
-            print(f"   • Salida: {usage.output_tokens}")
 
             texto_respuesta = respuesta.content[0].text.strip()
-            print(f"📥 Respuesta cruda: {texto_respuesta}")
             
-            # Limpieza de markdown si el modelo responde con ```json ... ```
+            # Limpieza de markdown
             if texto_respuesta.startswith("```"):
                 texto_respuesta = re.sub(r"^```[a-zA-Z]*\n?", "", texto_respuesta)
                 texto_respuesta = re.sub(r"\n?```$", "", texto_respuesta).strip()
 
             data = json.loads(texto_respuesta)
-            puntaje_val = int(data.get("puntaje", 0))
-            razon_val = data.get("razon", "Sin razón especificada")
+            puntaje_val = max(0, min(100, int(data.get("puntaje", 0))))
+            razon_val = data.get("razon", "Sin razón especificada").strip()
             
-            print(f"💡 Razón ({len(razon_val.split())} palabras): '{razon_val}'")
-            return max(0, min(100, puntaje_val))
+            print(f"💡 Resultado: Puntaje={puntaje_val} | Razón='{razon_val}'")
+            return puntaje_val, razon_val
 
         except Exception as e:
             error_str = str(e)
@@ -143,11 +122,11 @@ def llamar_claude(prompt_usuario, max_reintentos=3):
             if "rate_limit" in error_str or "429" in error_str:
                 time.sleep(3 * (intento + 1))
             else:
-                return None
-    return None
+                return None, None
+    return None, None
 
 # ==============================================================================
-# 4. ENDPOINTS
+# 4. ENDPOINT PRINCIPAL (/puntaje)
 # ==============================================================================
 @app.route('/puntaje', methods=['POST'])
 def puntaje():
@@ -159,30 +138,27 @@ def puntaje():
 
         descripcion_limpia = limpiar_descripcion(descripcion_raw)
 
-        print(f"\n==================== EVALUANDO VACANTE ====================")
-        print(f"PUESTO: {titulo} | EMPRESA: {empresa}")
-        print(f"📏 Caracteres: {len(descripcion_raw)} ──> Limpios: {len(descripcion_limpia)}")
-
         if not titulo and not descripcion_limpia:
-            return jsonify({"puntaje": ""}), 200
+            return jsonify({"puntaje": "", "razon": ""}), 200
 
         prompt_usuario = f"""EVALUA ESTA VACANTE:
 Puesto: {titulo}
 Empresa: {empresa}
 Descripción: {descripcion_limpia}"""
 
-        resultado = llamar_claude(prompt_usuario)
+        puntaje_res, razon_res = llamar_claude(prompt_usuario)
 
-        if resultado is None:
-            print("❌ No se pudo procesar el puntaje")
-            return jsonify({"puntaje": ""}), 200
+        if puntaje_res is None:
+            return jsonify({"puntaje": "", "razon": "Error al procesar"}), 200
 
-        print(f"✅ PUNTAJE FINAL: {resultado}")
-        return jsonify({"puntaje": str(resultado)}), 200
+        # Devuelve ambos datos al cliente (Make / Postman)
+        return jsonify({
+            "puntaje": str(puntaje_res),
+            "razon": razon_res
+        }), 200
 
     except Exception as e:
-        print(f"❌ Error general en endpoint: {str(e)[:200]}")
-        return jsonify({"puntaje": "", "error": str(e)[:100]}), 200
+        return jsonify({"puntaje": "", "razon": "", "error": str(e)[:100]}), 200
 
 @app.route('/health', methods=['GET'])
 def health():
